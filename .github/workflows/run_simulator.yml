@@ -1,0 +1,38 @@
+name: Schedule Energy Simulator
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-simulator:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run energy simulator
+        env:
+          BLOCKBAX_API_TOKEN:            ${{ secrets.BLOCKBAX_API_TOKEN }}
+          BLOCKBAX_PROJECT_ID:           ${{ secrets.BLOCKBAX_PROJECT_ID }}
+          WEATHER_STATION_SUBJECT_TYPE_ID: ${{ secrets.WEATHER_STATION_SUBJECT_TYPE_ID }}
+          WEATHERAPI_KEY:                ${{ secrets.WEATHERAPI_KEY }}
+          BLOCKBAX_WEATHER_INBOUND_URL:  ${{ secrets.BLOCKBAX_WEATHER_INBOUND_URL }}
+          PROPERTY_TYPE_ID:              ${{ secrets.PROPERTY_TYPE_ID }}
+          INVERTER_SUBJECT_TYPE_ID:      ${{ secrets.INVERTER_SUBJECT_TYPE_ID }}
+          TURBINE_SUBJECT_TYPE_ID:       ${{ secrets.TURBINE_SUBJECT_TYPE_ID }}
+          BLOCKBAX_INVERTER_INBOUND_URL: ${{ secrets.BLOCKBAX_INVERTER_INBOUND_URL }}
+          TURBINE_ENDPOINT_URL:          ${{ secrets.TURBINE_ENDPOINT_URL }}
+        run: python src/energy_simulator.py
