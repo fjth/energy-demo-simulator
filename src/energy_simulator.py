@@ -181,6 +181,20 @@ def simulate_turbine_senml(external_id, wind_speed, ambient_temp, rated_power_kw
     else:
         state = "ON"
 
+    # Compute theoretical output for curtailment calculation
+    if wind_speed < 3.5 or wind_speed > 25:
+        theoretical_output = 0.0
+    elif wind_speed < 12:
+        theoretical_output = round((wind_speed - 3.5) / (12 - 3.5) * rated_power_kw, 2)
+    else:
+        theoretical_output = rated_power_kw
+
+    # Curtailment factor: fraction of available power not generated
+    curtailment_factor = round((theoretical_output - output_kw) / theoretical_output, 3) if theoretical_output > 0 else 0.0
+
+    # Operating hours: 0.25h per 15-minute interval when ON
+    operating_hours = 0.25 if state == "ON" else 0.0
+
     return {
         "bn": external_id,
         "bt": int(time.time()),
@@ -191,7 +205,9 @@ def simulate_turbine_senml(external_id, wind_speed, ambient_temp, rated_power_kw
             {"n": "turbine_pitch_angle",     "u": "deg",   "v": pitch},
             {"n": "turbine_motor_temp",      "u": "Cel",   "v": temp},
             {"n": "turbine_vibration",       "u": "mm/s",  "v": vibration},
-            {"n": "turbine_status",          "vs": state}
+            {"n": "turbine_status",          "vs": state},
+            {"n": "turbine_hours",           "u": "h",     "v": operating_hours},
+            {"n": "curtailment_factor",      "v": curtailment_factor}
         ]
     }
 
