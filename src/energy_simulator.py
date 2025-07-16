@@ -116,10 +116,19 @@ def simulate_inverter_senml(external_id, ambient_temp, irradiance, max_kw=8.0):
     """
     Build a SenML entry for one inverter based on irradiance and ambient temp.
     """
-    eta = random.uniform(0.95, 0.99)
-    output_kw = round(max_kw * (irradiance / 1000) * eta, 2)
+    # Simulate DC input power based on irradiance (max_kw * irradiance/1000) with small panel variability
+    dc_power_kw = round(max_kw * (irradiance / 1000) * random.uniform(0.98, 1.02), 2)
+
+    # Simulate DC voltage (nominal 600V ±5%) and compute DC current from input power
     dc_voltage = round(random.uniform(0.95, 1.05) * 600, 1)
-    dc_current = round((output_kw * 1000) / dc_voltage, 2) if dc_voltage else 0
+    dc_current = round((dc_power_kw * 1000) / dc_voltage, 2) if dc_voltage else 0
+
+    # Simulate inverter efficiency (η) between 94% and 98%
+    eta = random.uniform(0.94, 0.98)
+
+    # Compute AC output power from DC input and efficiency
+    output_kw = round(dc_power_kw * eta, 2)
+
     temp = round(ambient_temp + (output_kw / max_kw) * 20, 1)
     status = "OFF" if irradiance == 0 else ("ERROR" if random.random() < 0.005 else "ON")
 
