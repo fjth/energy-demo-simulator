@@ -61,11 +61,6 @@ def get_inverters():
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
         items = resp.json().get("result", [])
-        inv_map = {}
-        for inv in items:
-            inv_map = inv_map if False else {}  # dummy to keep style
-            inv_map = inv_map  # no-op
-        # Actually build the map:
         inv_map = {
             item["externalId"]: {
                 "id": item["id"],
@@ -101,6 +96,14 @@ def simulate_inverter_senml(external_id, ambient_temp, irradiance, max_kw=8.0):
     dc_current  = round((dc_power_kw * 1000) / dc_voltage, 2) if dc_voltage else 0
     eta         = random.uniform(0.94, 0.98)
     output_kw   = round(dc_power_kw * eta, 2)
+    # Performance Ratio (PR) = AC output / (rated capacity * (irradiance/1000)), as a percentage
+    performance_ratio = 0.0
+    if irradiance and irradiance > 0:
+        # Calculate as a percentage
+        performance_ratio = round(
+            (output_kw / (max_kw * (irradiance / 1000))) * 100,
+            2
+        )
     temp        = round(ambient_temp + (output_kw / max_kw) * 20, 1)
     status      = "OFF" if irradiance == 0 else ("ERROR" if random.random() < 0.005 else "ON")
 
@@ -112,7 +115,8 @@ def simulate_inverter_senml(external_id, ambient_temp, irradiance, max_kw=8.0):
             {"n": "inverter_dc_voltage",      "u": "V",  "v": dc_voltage},
             {"n": "inverter_dc_current",      "u": "A",  "v": dc_current},
             {"n": "inverter_temperature",     "u": "Cel","v": temp},
-            {"n": "inverter_status",          "vs": status}
+            {"n": "inverter_status",          "vs": status},
+            {"n": "performance_ratio", "u": "%", "v": performance_ratio}
         ]
     }
 
@@ -201,15 +205,62 @@ def main():
 
     station_id_to_external = {info["parent_id"]: ext for ext,info in stations.items()}
 
-    # Fetch weather and bulk-post, patch icon (unchanged)
-    # ...
-
     weather_map = {}
     for ext_id, info in stations.items():
         if info["lat"] is not None and info["lon"] is not None:
             weather = get_weather_data(info["lat"], info["lon"])
             if weather:
                 weather_map[ext_id] = weather
+
+    # Send weather measurements and patch icons
+    weather_payloads = []
+    for ext_id, weather in weather_map.items():
+        entry = {
+            "subject": {"externalId": ext_id},
+            "measurements": [
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "fields": {
+                        "temperature": weather["temperature"],
+                        "wind_speed_mps": weather["wind_speed_mps"],
+                        "cloud_coverage": weather["cloud_coverage"],
+                        "solar_irradiance": weather["solar_irradiance"]
+                    }
+                }
+            ]
+        }
+        weather_payloads.append(entry)
+
+    if weather_payloads:
+        headers_w = {
+            "Authorization": f"ApiKey {BLOCKBAX_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        try:
+            resp = requests.post(BLOCKBAX_WEATHER_INBOUND_URL, json=weather_payloads, headers=headers_w, timeout=10)
+            resp.raise_for_status()
+            logging.info("Sent weather data to Blockbax")
+        except requests.RequestException as e:
+            logging.error(f"Failed to send weather data: {e}")
+
+        # Patch weather icon property per park
+        patch_h = {
+            "Authorization": f"ApiKey {BLOCKBAX_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        for ext_id, info in stations.items():
+            parent = info.get("parent_id")
+            weather = weather_map.get(ext_id)
+            if not parent or not weather or not weather.get("icon_url"):
+                continue
+            url = f"https://api.blockbax.com/v1/projects/{BLOCKBAX_PROJECT_ID}/subjects/{parent}/properties"
+            payload = {"values": {PROPERTY_TYPE_ID: {"text": weather["icon_url"]}}}
+            try:
+                p = requests.patch(url, json=payload, headers=patch_h, timeout=10)
+                p.raise_for_status()
+                logging.info(f"Patched icon for {ext_id}")
+            except requests.RequestException as e:
+                logging.error(f"Failed to patch icon for {ext_id}: {e}")
 
     # Build separate SenML payloads for inverters and turbines
     inverter_senml = []
@@ -274,7 +325,54 @@ def main():
         except:
             logging.error(f"Failed to patch avg power for {parent}")
 
-    # Then send inverter and turbine SenML as before…
+    # Helper to flatten a SenML list into the preset conversion format
+    def flatten_senml_list(senml_list):
+        flat = []
+        for rec in senml_list:
+            bn = rec.get("bn")
+            bt = rec.get("bt")
+            flat.append({"bn": bn})
+            for e in rec.get("e", []):
+                elem = {"n": e.get("n")}
+                if "v" in e:
+                    elem["v"] = e["v"]
+                if "vs" in e:
+                    elem["vs"] = e["vs"]
+                if "vb" in e:
+                    elem["vb"] = e["vb"]
+                if "vd" in e:
+                    elem["vd"] = e["vd"]
+                elem["t"] = int(bt)
+                flat.append(elem)
+        return flat
+
+    # Send inverters to the inverter endpoint
+    if inverter_senml:
+        flat_inverter = flatten_senml_list(inverter_senml)
+        headers_inv = {
+            "Authorization": f"ApiKey {SENML_API_KEY}",
+            "Content-Type": "application/senml+json"
+        }
+        try:
+            resp = requests.post(SENML_INBOUND_URL, json=flat_inverter, headers=headers_inv, timeout=10)
+            resp.raise_for_status()
+            logging.info(f"Sent inverter SenML payload with {len(flat_inverter)} entries")
+        except requests.RequestException as e:
+            logging.error(f"Failed to send inverter SenML payload: {e}")
+
+    # Send turbines to the turbine endpoint
+    if turbine_senml:
+        flat_turbine = flatten_senml_list(turbine_senml)
+        headers_turb = {
+            "Authorization": f"ApiKey {BLOCKBAX_API_TOKEN}",
+            "Content-Type": "application/senml+json"
+        }
+        try:
+            resp2 = requests.post(TURBINE_ENDPOINT_URL, json=flat_turbine, headers=headers_turb, timeout=10)
+            resp2.raise_for_status()
+            logging.info(f"Sent turbine SenML payload with {len(flat_turbine)} entries")
+        except requests.RequestException as e:
+            logging.error(f"Failed to send turbine SenML payload: {e}")
 
 if __name__ == "__main__":
     main()
