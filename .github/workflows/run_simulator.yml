@@ -35,4 +35,5 @@ jobs:
           TURBINE_SUBJECT_TYPE_ID:       ${{ secrets.TURBINE_SUBJECT_TYPE_ID }}
           BLOCKBAX_INVERTER_INBOUND_URL: ${{ secrets.BLOCKBAX_INVERTER_INBOUND_URL }}
           TURBINE_ENDPOINT_URL:          ${{ secrets.TURBINE_ENDPOINT_URL }}
+          POWER_OUTPUT_AVG_PROPERTY_TYPE_ID: ${{ secrets.POWER_OUTPUT_AVG_PROPERTY_TYPE_ID }}
         run: python src/energy_simulator.py
